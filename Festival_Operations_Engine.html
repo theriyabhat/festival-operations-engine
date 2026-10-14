@@ -1,0 +1,678 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Festival Operations Engine</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: ops-room dashboard. Controls and KPI strip on top, ward graph left, selected-ward prediction right, dispatch output below. */
+:root {
+  --bg: #edf1f2;
+  --surface: #fafcfc;
+  --fg: #13222a;
+  --muted: #566871;
+  --line: #d3dcdf;
+  --accent: #0a6a7c;
+  --ok: #2b7a4b;
+  --warn: #a96a0c;
+  --crit: #c0392b;
+  --display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e171b; --surface: #152228; --fg: #e4edf0; --muted: #8ea3ac; --line: #273b42;
+    --accent: #4cc2d6; --ok: #4cc17f; --warn: #e0a53a; --crit: #f0705f; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e171b; --surface: #152228; --fg: #e4edf0; --muted: #8ea3ac; --line: #273b42;
+  --accent: #4cc2d6; --ok: #4cc17f; --warn: #e0a53a; --crit: #f0705f; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg); font: 15px/1.5 var(--body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 24px 48px;
+}
+.wrap { max-width: 1180px; margin: 0 auto; display: grid; gap: 18px; }
+.eyebrow { font: 500 11.5px/1.2 var(--mono); letter-spacing: .09em; text-transform: uppercase; color: var(--muted); }
+h1 { font: 600 clamp(1.7rem, 3.4vw, 2.4rem)/1.1 var(--display); margin: 6px 0 8px; text-wrap: balance; letter-spacing: -.005em; }
+h2 { font: 600 1.15rem/1.2 var(--display); margin: 4px 0 0; text-wrap: balance; }
+p { margin: 0; }
+.lede { color: var(--muted); max-width: 62ch; }
+header { display: flex; flex-wrap: wrap; gap: 16px 32px; align-items: flex-end; justify-content: space-between; }
+header > div { min-width: 0; }
+.controls { display: flex; flex-wrap: wrap; gap: 14px 20px; align-items: flex-end; }
+.field { display: grid; gap: 5px; min-width: 0; }
+.field label, .field .lab { font: 500 11.5px/1.2 var(--mono); letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+select, textarea, button { font: inherit; color: inherit; }
+select { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; max-width: 100%; }
+input[type=range] { width: 190px; max-width: 100%; accent-color: var(--accent); }
+button {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; cursor: pointer; font-weight: 500;
+}
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+:root[data-theme="dark"] button.primary { color: #06161a; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) button.primary { color: #06161a; } }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+.stat { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; min-width: 0; }
+.stat .v { font: 500 1.7rem/1.15 var(--mono); font-variant-numeric: tabular-nums; margin-top: 4px; }
+.stat .s { color: var(--muted); font-size: .8rem; margin-top: 2px; }
+.main { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; min-width: 0; }
+.card-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 12px; margin-bottom: 10px; align-items: baseline; }
+.hint { color: var(--muted); font-size: .82rem; }
+svg { display: block; width: 100%; height: auto; }
+.mapsvg { background: var(--bg); border-radius: 8px; border: 1px solid var(--line); }
+.gridline { stroke: var(--line); stroke-width: 1; opacity: .6; }
+.edge { stroke: var(--line); stroke-width: 2.5; }
+.flow { stroke: var(--accent); fill: none; stroke-linecap: round; opacity: .9; }
+.arrow { fill: var(--accent); }
+.hatchline { stroke: var(--muted); stroke-width: 1.4; opacity: .5; }
+.flowlab { font: 500 11px var(--mono); fill: var(--accent); stroke: var(--bg); stroke-width: 4; paint-order: stroke; }
+.node { cursor: pointer; }
+.node .c { stroke-width: 2.5; }
+.node.ok .c { fill: color-mix(in srgb, var(--ok) 16%, var(--surface)); stroke: var(--ok); }
+.node.warn .c { fill: color-mix(in srgb, var(--warn) 18%, var(--surface)); stroke: var(--warn); }
+.node.crit .c { fill: color-mix(in srgb, var(--crit) 20%, var(--surface)); stroke: var(--crit); }
+.node.closed .c { fill: url(#hatch); stroke: var(--muted); stroke-dasharray: 5 4; }
+.node .sel { fill: none; stroke: var(--accent); stroke-width: 2; opacity: 0; }
+.node.selected .sel { opacity: 1; }
+.node:focus-visible { outline: none; }
+.node:focus-visible .sel { opacity: 1; stroke-dasharray: 3 3; }
+.nm { font: 600 12.5px var(--body); fill: var(--fg); text-anchor: middle; }
+.wd { font: 500 10px var(--mono); fill: var(--muted); text-anchor: middle; letter-spacing: .04em; }
+.pct { font: 600 13px var(--mono); fill: var(--fg); text-anchor: middle; }
+.compass { font: 500 10px var(--mono); fill: var(--muted); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px; font-size: .8rem; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; border: 2px solid; display: inline-block; }
+.dot.ok { border-color: var(--ok); } .dot.warn { border-color: var(--warn); } .dot.crit { border-color: var(--crit); }
+.dot.closed { border-color: var(--muted); border-style: dashed; }
+.pill { display: inline-block; font: 500 11px/1 var(--mono); letter-spacing: .05em; text-transform: uppercase; padding: 4px 7px; border-radius: 4px; white-space: nowrap; }
+.pill.ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 15%, transparent); }
+.pill.warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 17%, transparent); }
+.pill.crit { color: var(--crit); background: color-mix(in srgb, var(--crit) 15%, transparent); }
+.pill.closed { color: var(--muted); background: color-mix(in srgb, var(--muted) 18%, transparent); }
+.pill.route { color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, transparent); }
+dl { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; margin: 12px 0; font-size: .9rem; }
+dt { color: var(--muted); }
+dd { margin: 0; font: 500 .9rem var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
+.sidehead { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; justify-content: space-between; }
+.chart text { font: 500 10.5px var(--mono); fill: var(--muted); }
+.chart .axis { stroke: var(--line); stroke-width: 1; }
+.chart .l-base { stroke: var(--muted); fill: none; stroke-width: 2; stroke-dasharray: 5 4; }
+.chart .l-foe { stroke: var(--accent); fill: none; stroke-width: 2.6; }
+.chart .l-thr { stroke: var(--warn); stroke-width: 1.4; stroke-dasharray: 2 4; }
+.chart .t-thr { fill: var(--warn); }
+.chart .t-foe { fill: var(--accent); font-weight: 500; }
+.tablewrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: .9rem; min-width: 560px; }
+th { text-align: left; font: 500 11px var(--mono); letter-spacing: .07em; text-transform: uppercase; color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--line); }
+td { padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+td.n { font: 500 .85rem var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+td.who { color: var(--muted); white-space: nowrap; }
+.two { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
+pre.json {
+  margin: 0; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 12px;
+  font: 12px/1.55 var(--mono); max-height: 340px; overflow: auto; color: var(--fg);
+}
+details { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; }
+summary { cursor: pointer; font-weight: 600; }
+textarea {
+  width: 100%; min-height: 260px; margin-top: 12px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+  padding: 12px; font: 12px/1.55 var(--mono); resize: vertical; color: var(--fg);
+}
+.rowbtn { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; align-items: center; }
+.err { color: var(--crit); font-size: .85rem; }
+.ok-msg { color: var(--ok); font-size: .85rem; }
+footer { color: var(--muted); font-size: .82rem; max-width: 80ch; }
+@media (max-width: 860px) { .main { grid-template-columns: minmax(0, 1fr); } }
+@media (prefers-reduced-motion: no-preference) {
+  .flow, .node .c { transition: stroke-width .2s, fill .2s, stroke .2s; }
+}
+</style>
+
+<div class="wrap">
+  <header>
+    <div>
+      <div class="eyebrow">PS 01 · BMC field marshals + Solid Waste Management</div>
+      <h1>Festival Operations Engine</h1>
+      <p class="lede">Live crowd telemetry goes in. Machine-readable crowd diversions and waste truck dispatches come out. Change the crowd, close a ward, or swap the layout JSON and watch the directives update.</p>
+    </div>
+    <div class="controls">
+      <div class="field">
+        <label for="profile">Layout profile</label>
+        <select id="profile"></select>
+      </div>
+      <div class="field">
+        <label for="surge">Crowd surge <span id="surgeVal" style="color:var(--fg)">100%</span></label>
+        <input id="surge" type="range" min="60" max="150" step="5" value="100">
+      </div>
+      <button id="reset" type="button">Reset</button>
+    </div>
+  </header>
+
+  <section class="stats" aria-label="Summary">
+    <div class="stat"><div class="eyebrow">Wards over limit</div><div class="v" id="s1">–</div><div class="s" id="s1s"></div></div>
+    <div class="stat"><div class="eyebrow">People re-routed</div><div class="v" id="s2">–</div><div class="s" id="s2s"></div></div>
+    <div class="stat"><div class="eyebrow">SWM trucks sent</div><div class="v" id="s3">–</div><div class="s" id="s3s"></div></div>
+    <div class="stat"><div class="eyebrow">Needs escalation</div><div class="v" id="s4">–</div><div class="s" id="s4s"></div></div>
+  </section>
+
+  <div class="main">
+    <section class="card">
+      <div class="card-head">
+        <div><div class="eyebrow">Steps 1–3 · Telemetry and backpressure</div><h2 id="mapTitle">Ward graph</h2></div>
+        <div class="hint">Select a ward to inspect it or close it.</div>
+      </div>
+      <svg id="map" class="mapsvg" viewBox="0 0 640 400" role="img" aria-label="Ward graph with crowd load and re-routing flows"></svg>
+      <div class="legend">
+        <span><i class="dot ok"></i>Within limit</span>
+        <span><i class="dot warn"></i>Near capacity</span>
+        <span><i class="dot crit"></i>Over capacity</span>
+        <span><i class="dot closed"></i>Closed</span>
+        <span>Circle shows load after re-routing. Arrows show diverted crowd.</span>
+      </div>
+    </section>
+
+    <section class="card" id="side" aria-live="polite"></section>
+  </div>
+
+  <section class="card">
+    <div class="card-head">
+      <div><div class="eyebrow">Step 5 · Output</div><h2>Dispatch directives</h2></div>
+      <div class="hint" id="payloadMeta"></div>
+    </div>
+    <div class="two">
+      <div class="tablewrap"><table>
+        <thead><tr><th>#</th><th>Directive</th><th>Instruction</th><th>Executes</th></tr></thead>
+        <tbody id="dirs"></tbody>
+      </table></div>
+      <div>
+        <div class="card-head" style="margin-bottom:8px">
+          <div class="eyebrow">Structured payload for field execution</div>
+          <button id="copy" type="button">Copy JSON</button>
+        </div>
+        <pre class="json" id="json" tabindex="0"></pre>
+      </div>
+    </div>
+  </section>
+
+  <details>
+    <summary>Layout profile JSON (hot-swap)</summary>
+    <p class="hint" style="margin-top:8px">Edit wards, capacities, dwell times, bins, links or trucks, then apply. No code changes and no restart.</p>
+    <label class="lab eyebrow" for="profileJson" style="display:block;margin-top:10px">Profile</label>
+    <textarea id="profileJson" spellcheck="false"></textarea>
+    <div class="rowbtn">
+      <button id="apply" class="primary" type="button">Apply profile</button>
+      <span id="applyMsg" role="status"></span>
+    </div>
+  </details>
+
+  <footer>Sample data for demonstration. Ward names are real Mumbai localities, but crowd sizes, bin counts and truck positions are illustrative and are not BMC records.</footer>
+</div>
+
+<script>
+var PROFILES = {
+  lalbaug: {
+    name: "Lalbaug to Girgaon Ganpati corridor",
+    threshold: 0.85, wasteK: 0.06, decayHours: 3,
+    nodes: [
+      { id: "DD", name: "Dadar TT", ward: "G/North", cap: 14000, crowd: 8800, dwell: 30, bins: 6, binKg: 240, fill: 35, x: 430, y: 62 },
+      { id: "PR", name: "Parel", ward: "F/South", cap: 9000, crowd: 5200, dwell: 25, bins: 4, binKg: 240, fill: 38, x: 245, y: 125 },
+      { id: "LB", name: "Lalbaug", ward: "F/South", cap: 12000, crowd: 12600, dwell: 45, bins: 5, binKg: 240, fill: 52, x: 420, y: 195 },
+      { id: "WL", name: "Worli", ward: "G/South", cap: 8000, crowd: 3100, dwell: 20, bins: 4, binKg: 240, fill: 22, x: 100, y: 160 },
+      { id: "BR", name: "Byculla", ward: "E", cap: 8500, crowd: 4200, dwell: 28, bins: 4, binKg: 240, fill: 41, x: 550, y: 275 },
+      { id: "GR", name: "Grant Road", ward: "D", cap: 7000, crowd: 3000, dwell: 22, bins: 3, binKg: 240, fill: 30, x: 395, y: 320 },
+      { id: "GC", name: "Girgaon Chowpatty", ward: "D", cap: 16000, crowd: 13800, dwell: 50, bins: 7, binKg: 240, fill: 48, x: 215, y: 315 }
+    ],
+    edges: [["DD","PR"],["DD","LB"],["PR","LB"],["PR","WL"],["LB","BR"],["LB","GR"],["GR","BR"],["GR","GC"],["WL","GC"],["PR","GC"]],
+    trucks: [{ id: "SWM-07", at: "PR" }, { id: "SWM-12", at: "BR" }, { id: "SWM-15", at: "WL" }]
+  },
+  juhu: {
+    name: "Juhu beach immersion route",
+    threshold: 0.85, wasteK: 0.07, decayHours: 2.5,
+    nodes: [
+      { id: "JB", name: "Juhu Beach", ward: "K/West", cap: 15000, crowd: 13200, dwell: 55, bins: 8, binKg: 240, fill: 44, x: 130, y: 140 },
+      { id: "JT", name: "Juhu Tara Road", ward: "K/West", cap: 6000, crowd: 3400, dwell: 24, bins: 3, binKg: 240, fill: 33, x: 320, y: 70 },
+      { id: "IR", name: "Irla", ward: "K/West", cap: 5500, crowd: 2200, dwell: 20, bins: 3, binKg: 240, fill: 25, x: 470, y: 160 },
+      { id: "VS", name: "Versova", ward: "K/West", cap: 7500, crowd: 5800, dwell: 35, bins: 4, binKg: 240, fill: 51, x: 180, y: 290 },
+      { id: "SC", name: "Santacruz West", ward: "H/West", cap: 9000, crowd: 4100, dwell: 26, bins: 4, binKg: 240, fill: 29, x: 400, y: 305 }
+    ],
+    edges: [["JB","JT"],["JB","VS"],["JT","IR"],["JT","SC"],["IR","SC"],["VS","SC"],["JB","IR"]],
+    trucks: [{ id: "SWM-21", at: "IR" }, { id: "SWM-24", at: "SC" }]
+  }
+};
+
+var state = { key: "lalbaug", profile: null, surge: 1, closed: {}, selected: null, lastJson: "" };
+
+function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+function fmt(n) { return Math.round(n).toLocaleString("en-IN"); }
+function fmtK(n) { return n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, "") + "k" : String(Math.round(n)); }
+
+function validateProfile(p) {
+  if (!p || typeof p !== "object") return "Profile must be a JSON object.";
+  if (!Array.isArray(p.nodes) || p.nodes.length < 2) return "Profile needs a nodes array with at least two wards.";
+  var ids = {};
+  for (var i = 0; i < p.nodes.length; i++) {
+    var n = p.nodes[i];
+    if (!n || typeof n.id !== "string") return "Node " + (i + 1) + " needs a string id.";
+    if (ids[n.id]) return "Duplicate node id " + n.id + ".";
+    ids[n.id] = 1;
+    var req = ["cap", "crowd", "dwell", "bins", "binKg", "fill", "x", "y"];
+    for (var k = 0; k < req.length; k++) {
+      if (typeof n[req[k]] !== "number" || !isFinite(n[req[k]])) return "Node " + n.id + " needs a numeric " + req[k] + ".";
+    }
+    if (n.cap <= 0 || n.bins <= 0 || n.binKg <= 0) return "Node " + n.id + " needs cap, bins and binKg above zero.";
+  }
+  if (!Array.isArray(p.edges)) return "Profile needs an edges array.";
+  for (var e = 0; e < p.edges.length; e++) {
+    var ed = p.edges[e];
+    if (!Array.isArray(ed) || !ids[ed[0]] || !ids[ed[1]]) return "Edge " + (e + 1) + " must link two existing node ids.";
+  }
+  if (typeof p.threshold !== "number" || p.threshold <= 0.3 || p.threshold > 1) return "threshold must be a number between 0.3 and 1.";
+  if (typeof p.wasteK !== "number" || p.wasteK <= 0) return "wasteK must be a positive number.";
+  if (typeof p.decayHours !== "number" || p.decayHours <= 0) return "decayHours must be a positive number.";
+  if (p.trucks && !Array.isArray(p.trucks)) return "trucks must be an array.";
+  return null;
+}
+
+function wasteModel(n, load, P) {
+  var f = Math.min(2, Math.max(0.5, n.dwell / 30));
+  var coeff = P.wasteK * f;
+  var v = load * coeff;
+  var capKg = n.bins * n.binKg;
+  var fill0 = n.fill / 100 * capKg;
+  var tau = P.decayHours;
+  function kgAt(tMin) { return fill0 + v * tau * (1 - Math.exp(-tMin / 60 / tau)); }
+  function pctAt(tMin) { return kgAt(tMin) / capKg * 100; }
+  var need = 0.9 * capKg - fill0, t90;
+  if (need <= 0) t90 = 0;
+  else if (need >= v * tau) t90 = Infinity;
+  else t90 = -tau * Math.log(1 - need / (v * tau)) * 60;
+  return { coeff: coeff, v: v, capKg: capKg, pctAt: pctAt, t90: t90 };
+}
+
+function bfsHops(src, adj, byId) {
+  var d = {}; d[src] = 0;
+  var q = [src];
+  while (q.length) {
+    var u = q.shift();
+    for (var i = 0; i < adj[u].length; i++) {
+      var v = adj[u][i];
+      if (!(v in d) && !byId[v].closed) { d[v] = d[u] + 1; q.push(v); }
+    }
+  }
+  return d;
+}
+
+function hash32(str) {
+  var h = 0x811c9dc5;
+  for (var i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  return ("00000000" + h.toString(16)).slice(-8).toUpperCase();
+}
+
+function compute(P, surge, closed) {
+  var thr = P.threshold;
+  var nodes = P.nodes.map(function (n) {
+    var o = Object.assign({}, n);
+    o.base = Math.round(n.crowd * surge);
+    o.load = o.base;
+    o.closed = !!closed[n.id];
+    return o;
+  });
+  var byId = {}; nodes.forEach(function (n) { byId[n.id] = n; });
+  var adj = {}; nodes.forEach(function (n) { adj[n.id] = []; });
+  P.edges.forEach(function (e) { adj[e[0]].push(e[1]); adj[e[1]].push(e[0]); });
+  var raw = [], stranded = [];
+
+  nodes.filter(function (n) { return n.closed; }).forEach(function (n) {
+    var open = adj[n.id].map(function (id) { return byId[id]; }).filter(function (j) { return !j.closed; });
+    var tot = open.reduce(function (a, j) { return a + j.cap; }, 0);
+    if (!tot || n.load <= 0) { if (n.load > 0) stranded.push(n.id); return; }
+    var moving = n.load;
+    open.forEach(function (j) {
+      var amt = moving * j.cap / tot;
+      j.load += amt; raw.push({ from: n.id, to: j.id, count: amt, pass: 0, kind: "EVACUATE" });
+    });
+    n.load = 0;
+  });
+
+  var openNodes = nodes.filter(function (n) { return !n.closed; });
+  var blocked = {};
+  var passes = 0;
+  for (var pass = 1; pass <= 8; pass++) {
+    var moved = false;
+    var order = openNodes.slice().sort(function (a, b) { return b.load / b.cap - a.load / a.cap; });
+    for (var oi = 0; oi < order.length; oi++) {
+      var n = order[oi];
+      var excess = n.load - thr * n.cap;
+      if (excess < 5) continue;
+      var c = adj[n.id].map(function (id) { return byId[id]; })
+        .filter(function (j) { return !j.closed && !blocked[n.id + ">" + j.id]; })
+        .map(function (j) { return { j: j, sp: Math.max(0, j.cap - j.load) }; })
+        .filter(function (x) { return x.sp > 1; });
+      var tot = c.reduce(function (a, x) { return a + x.sp; }, 0);
+      if (!tot) continue;
+      var mv = Math.min(excess, tot);
+      c.forEach(function (x) {
+        var amt = mv * x.sp / tot;
+        n.load -= amt; x.j.load += amt;
+        raw.push({ from: n.id, to: x.j.id, count: amt, pass: pass, kind: "DIVERT" });
+        blocked[x.j.id + ">" + n.id] = 1;
+      });
+      moved = true;
+    }
+    if (!moved) break;
+    passes = pass;
+  }
+  nodes.forEach(function (n) { n.load = Math.round(n.load); });
+
+  var agg = {};
+  raw.forEach(function (f) {
+    var k = f.from + ">" + f.to;
+    if (!agg[k]) agg[k] = { from: f.from, to: f.to, count: 0, pass: f.pass, kind: f.kind };
+    agg[k].count += f.count;
+    if (f.pass < agg[k].pass) agg[k].pass = f.pass;
+    if (f.kind === "EVACUATE") agg[k].kind = "EVACUATE";
+  });
+  var flows = Object.keys(agg).map(function (k) { var f = agg[k]; f.count = Math.round(f.count / 10) * 10; return f; })
+    .filter(function (f) { return f.count >= 10; })
+    .sort(function (a, b) { return a.pass - b.pass || b.count - a.count; });
+
+  nodes.forEach(function (n) {
+    n.wBase = wasteModel(n, n.base, P);
+    n.wFoe = wasteModel(n, n.load, P);
+  });
+
+  var directives = [];
+  nodes.filter(function (n) { return n.closed; }).forEach(function (n) {
+    directives.push({ type: "WARD_CLOSURE", node: n.id, ward: n.ward, people_to_clear: n.base });
+  });
+  flows.forEach(function (f) {
+    directives.push({
+      type: f.kind === "EVACUATE" ? "CROWD_EVACUATE" : "CROWD_DIVERT",
+      from: f.from, to: f.to, people: f.count, cascade_pass: f.pass, marshal_ward: byId[f.from].ward
+    });
+  });
+
+  var due = nodes.filter(function (n) { return !n.closed && isFinite(n.wFoe.t90) && n.wFoe.t90 <= 120; })
+    .sort(function (a, b) { return a.wFoe.t90 - b.wFoe.t90; });
+  var used = {}, unserved = [];
+  var trucks = P.trucks || [];
+  due.forEach(function (n) {
+    var best = null;
+    trucks.forEach(function (t) {
+      if (used[t.id] || !byId[t.at]) return;
+      var d = bfsHops(t.at, adj, byId);
+      if (!(n.id in d)) return;
+      if (!best || d[n.id] < best.hops) best = { t: t, hops: d[n.id] };
+    });
+    if (!best) { unserved.push(n.id); return; }
+    used[best.t.id] = 1;
+    var eta = best.hops * 12 + 5;
+    directives.push({
+      type: "SWM_DISPATCH", truck: best.t.id, to: n.id, eta_min: eta,
+      bins_full_in_min: Math.round(n.wFoe.t90), on_time: eta <= n.wFoe.t90, marshal_ward: n.ward
+    });
+  });
+  unserved.forEach(function (id) {
+    directives.push({ type: "ESCALATE", node: id, reason: "No SWM truck available before bins reach 90%", ward: byId[id].ward });
+  });
+  nodes.filter(function (n) { return !n.closed && n.load > n.cap; }).forEach(function (n) {
+    directives.push({ type: "ESCALATE", node: n.id, reason: "Load " + fmt(n.load) + " exceeds capacity " + fmt(n.cap) + " after all diversions", ward: n.ward });
+  });
+  stranded.forEach(function (id) {
+    directives.push({ type: "ESCALATE", node: id, reason: "Closed ward has no open neighbour to receive its crowd", ward: byId[id].ward });
+  });
+  directives.forEach(function (d, i) { d.seq = i + 1; });
+
+  var overBefore = nodes.filter(function (n) { return !n.closed && n.base > thr * n.cap; }).length;
+  var overAfter = nodes.filter(function (n) { return !n.closed && n.load > thr * n.cap + 1; }).length;
+  var moved = flows.reduce(function (a, f) { return a + f.count; }, 0);
+  var dispatched = directives.filter(function (d) { return d.type === "SWM_DISPATCH"; }).length;
+  var escalations = directives.filter(function (d) { return d.type === "ESCALATE"; }).length;
+
+  return { nodes: nodes, byId: byId, adj: adj, flows: flows, directives: directives, passes: passes,
+           stats: { overBefore: overBefore, overAfter: overAfter, moved: moved, dispatched: dispatched, due: due.length, escalations: escalations } };
+}
+
+function status(n, thr) {
+  if (n.closed) return "closed";
+  var r = n.load / n.cap;
+  if (r <= thr) return "ok";
+  if (r <= 1) return "warn";
+  return "crit";
+}
+var STATUS_LABEL = { ok: "Within limit", warn: "Near capacity", crit: "Over capacity", closed: "Closed" };
+
+function instruction(d, byId) {
+  var nm = function (id) { return byId[id] ? byId[id].name : id; };
+  switch (d.type) {
+    case "WARD_CLOSURE": return "Close " + nm(d.node) + " and clear " + fmt(d.people_to_clear) + " people.";
+    case "CROWD_EVACUATE": return "Move " + fmt(d.people) + " people from " + nm(d.from) + " to " + nm(d.to) + ".";
+    case "CROWD_DIVERT": return "Divert " + fmt(d.people) + " people from " + nm(d.from) + " to " + nm(d.to) + " (cascade pass " + d.cascade_pass + ").";
+    case "SWM_DISPATCH": return "Send " + d.truck + " to " + nm(d.to) + ". ETA " + d.eta_min + " min, bins reach 90% in " + d.bins_full_in_min + " min" + (d.on_time ? "." : ". Truck will arrive late.");
+    case "ESCALATE": return nm(d.node) + ": " + d.reason + ".";
+  }
+  return "";
+}
+var TYPE_LABEL = { WARD_CLOSURE: ["closed", "Closure"], CROWD_EVACUATE: ["route", "Evacuate"], CROWD_DIVERT: ["route", "Divert"], SWM_DISPATCH: ["ok", "Dispatch"], ESCALATE: ["crit", "Escalate"] };
+
+function renderMap(M) {
+  var P = state.profile, thr = P.threshold, byId = M.byId;
+  var s = '<defs><marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerUnits="userSpaceOnUse" markerWidth="13" markerHeight="13" orient="auto"><path d="M0 0L10 5L0 10z" class="arrow"/></marker>' +
+          '<pattern id="hatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="7" height="7" fill="var(--surface)"/><line x1="0" y1="0" x2="0" y2="7" class="hatchline"/></pattern></defs>';
+  for (var gx = 40; gx < 640; gx += 40) s += '<line class="gridline" x1="' + gx + '" y1="0" x2="' + gx + '" y2="400"/>';
+  for (var gy = 40; gy < 400; gy += 40) s += '<line class="gridline" x1="0" y1="' + gy + '" x2="640" y2="' + gy + '"/>';
+  s += '<text class="compass" x="614" y="22">N ↑</text>';
+  var rad = function (n) { return 20 + n.cap / 1000 * 1.1; };
+  P.edges.forEach(function (e) {
+    var a = byId[e[0]], b = byId[e[1]];
+    s += '<line class="edge" x1="' + a.x + '" y1="' + a.y + '" x2="' + b.x + '" y2="' + b.y + '"/>';
+  });
+  var net = {};
+  M.flows.forEach(function (f) {
+    var key = f.from < f.to ? f.from + "|" + f.to : f.to + "|" + f.from;
+    if (!net[key]) net[key] = { a: f.from < f.to ? f.from : f.to, b: f.from < f.to ? f.to : f.from, v: 0 };
+    net[key].v += f.from === net[key].a ? f.count : -f.count;
+  });
+  Object.keys(net).forEach(function (k) {
+    var q = net[k]; if (Math.abs(q.v) < 10) return;
+    var from = byId[q.v > 0 ? q.a : q.b], to = byId[q.v > 0 ? q.b : q.a];
+    var dx = to.x - from.x, dy = to.y - from.y, len = Math.sqrt(dx * dx + dy * dy), ux = dx / len, uy = dy / len;
+    var x1 = from.x + ux * (rad(from) + 5), y1 = from.y + uy * (rad(from) + 5);
+    var x2 = to.x - ux * (rad(to) + 9), y2 = to.y - uy * (rad(to) + 9);
+    var w = Math.min(8, 2 + Math.abs(q.v) / 700);
+    s += '<line class="flow" stroke-width="' + w.toFixed(1) + '" x1="' + x1.toFixed(1) + '" y1="' + y1.toFixed(1) + '" x2="' + x2.toFixed(1) + '" y2="' + y2.toFixed(1) + '" marker-end="url(#arr)"/>';
+    s += '<text class="flowlab" text-anchor="middle" x="' + ((x1 + x2) / 2).toFixed(1) + '" y="' + ((y1 + y2) / 2 - 8).toFixed(1) + '">' + fmtK(Math.abs(q.v)) + '</text>';
+  });
+  M.nodes.forEach(function (n) {
+    var st = status(n, thr), r = rad(n);
+    s += '<g class="node ' + st + (state.selected === n.id ? " selected" : "") + '" data-id="' + esc(n.id) + '" tabindex="0" role="button" aria-label="' +
+         esc(n.name) + ", " + STATUS_LABEL[st] + ", " + (n.closed ? "closed" : Math.round(n.load / n.cap * 100) + " percent of capacity") + '">' +
+         '<circle class="sel" cx="' + n.x + '" cy="' + n.y + '" r="' + (r + 6) + '"/>' +
+         '<circle class="c" cx="' + n.x + '" cy="' + n.y + '" r="' + r + '"/>' +
+         '<text class="pct" x="' + n.x + '" y="' + (n.y + 4.5) + '">' + (n.closed ? "CLOSED" : Math.round(n.load / n.cap * 100) + "%") + '</text>' +
+         '<text class="nm" x="' + n.x + '" y="' + (n.y + r + 16) + '">' + esc(n.name) + '</text>' +
+         '<text class="wd" x="' + n.x + '" y="' + (n.y + r + 29) + '">' + esc(n.ward) + ' · ' + fmtK(n.load) + ' / ' + fmtK(n.cap) + '</text></g>';
+  });
+  document.getElementById("map").innerHTML = s;
+}
+
+function chartSvg(n) {
+  var W = 380, H = 220, L = 38, R = 74, T = 14, B = 30;
+  var pts = [];
+  for (var t = 0; t <= 120; t += 5) pts.push(t);
+  var base = pts.map(function (t) { return n.wBase.pctAt(t); });
+  var foe = pts.map(function (t) { return n.wFoe.pctAt(t); });
+  var mx = Math.max.apply(null, base.concat(foe));
+  var ymax = Math.min(300, Math.max(110, Math.ceil(mx / 10) * 10));
+  var X = function (t) { return L + (W - L - R) * t / 120; };
+  var Y = function (v) { return T + (H - T - B) * (1 - v / ymax); };
+  var path = function (a) { return a.map(function (v, i) { return (i ? "L" : "M") + X(pts[i]).toFixed(1) + " " + Y(v).toFixed(1); }).join(" "); };
+  var s = '<svg class="chart" viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="Predicted bin fill over the next two hours for ' + esc(n.name) + '">';
+  var ticks = [0, 50, 100]; if (ymax >= 150) ticks.push(150); if (ymax >= 200) ticks.push(200); if (ymax >= 250) ticks.push(250);
+  ticks.forEach(function (v) {
+    s += '<line class="axis" x1="' + L + '" x2="' + (W - R) + '" y1="' + Y(v).toFixed(1) + '" y2="' + Y(v).toFixed(1) + '"/>';
+    s += '<text x="' + (L - 6) + '" y="' + (Y(v) + 3.5).toFixed(1) + '" text-anchor="end">' + v + '%</text>';
+  });
+  [0, 30, 60, 90, 120].forEach(function (t) {
+    s += '<text x="' + X(t).toFixed(1) + '" y="' + (H - 10) + '" text-anchor="middle">' + (t === 0 ? "now" : "+" + t + "m") + '</text>';
+  });
+  s += '<line class="l-thr" x1="' + L + '" x2="' + (W - R) + '" y1="' + Y(90).toFixed(1) + '" y2="' + Y(90).toFixed(1) + '"/>';
+  s += '<text class="t-thr" x="' + (W - R + 6) + '" y="' + (Y(90) + 3.5).toFixed(1) + '">truck at 90%</text>';
+  s += '<path class="l-base" d="' + path(base) + '"/><path class="l-foe" d="' + path(foe) + '"/>';
+  var yb = Y(base[base.length - 1]), yf = Y(foe[foe.length - 1]);
+  if (Math.abs(yb - yf) < 13) { if (yb <= yf) { yb -= 7; yf += 7; } else { yb += 7; yf -= 7; } }
+  s += '<text x="' + (W - R + 6) + '" y="' + (yb + 3.5).toFixed(1) + '">no action</text>';
+  s += '<text class="t-foe" x="' + (W - R + 6) + '" y="' + (yf + 3.5).toFixed(1) + '">with FOE</text></svg>';
+  return s;
+}
+
+function renderSide(M) {
+  var n = M.byId[state.selected] || M.nodes[0];
+  var P = state.profile, st = status(n, P.threshold);
+  var h = '<div class="eyebrow">Step 4 · Prediction</div>' +
+    '<div class="sidehead"><h2>' + esc(n.name) + '</h2><span class="pill ' + st + '">' + STATUS_LABEL[st] + '</span></div>' +
+    '<dl>' +
+    '<dt>Ward</dt><dd>' + esc(n.ward) + '</dd>' +
+    '<dt>Crowd reported</dt><dd>' + fmt(n.base) + '</dd>' +
+    '<dt>Crowd after routing</dt><dd>' + fmt(n.load) + ' / ' + fmt(n.cap) + '</dd>' +
+    '<dt>Average dwell time</dt><dd>' + n.dwell + ' min</dd>' +
+    '<dt>Crowd-to-waste coefficient</dt><dd>' + n.wFoe.coeff.toFixed(3) + ' kg/person·h</dd>' +
+    '<dt>Waste velocity</dt><dd>' + fmt(n.wFoe.v) + ' kg/h</dd>' +
+    '<dt>Bins now</dt><dd>' + n.bins + ' × ' + n.binKg + ' kg · ' + n.fill + '% full</dd>' +
+    '<dt>Bins full (90%) in</dt><dd>' + (isFinite(n.wFoe.t90) ? (n.wFoe.t90 <= 0 ? "now" : Math.round(n.wFoe.t90) + " min") : "beyond 2 h") + '</dd>' +
+    '</dl>';
+  h += chartSvg(n);
+  h += '<div class="rowbtn"><button id="toggleClose" type="button">' + (n.closed ? "Reopen ward" : "Simulate closing this ward") + '</button></div>';
+  h += '<p class="hint" style="margin-top:10px">Ward isolation re-routes the whole crowd to open neighbours and shows the ripple across the graph.</p>';
+  document.getElementById("side").innerHTML = h;
+}
+
+function renderDirectives(M) {
+  var P = state.profile;
+  var body = "";
+  if (!M.directives.length) body = '<tr><td colspan="4" class="hint">No action needed. Every ward is within its limit and no bins will fill in the next two hours.</td></tr>';
+  M.directives.forEach(function (d) {
+    var tl = TYPE_LABEL[d.type];
+    var who = d.type === "SWM_DISPATCH" ? "SWM driver " + d.truck : "Marshal, " + (d.marshal_ward || d.ward);
+    body += '<tr><td class="n">' + d.seq + '</td><td><span class="pill ' + tl[0] + '">' + tl[1] + '</span></td><td>' + esc(instruction(d, M.byId)) + '</td><td class="who">' + esc(who) + '</td></tr>';
+  });
+  document.getElementById("dirs").innerHTML = body;
+  var core = JSON.stringify(M.directives);
+  var id = "FOE-" + hash32(P.name + "|" + state.surge + "|" + core);
+  var payload = { schema: "foe.dispatch/1", payload_id: id, profile: P.name, crowd_surge: state.surge, generated_at: new Date().toISOString(), directives: M.directives };
+  Object.freeze(payload);
+  state.lastJson = JSON.stringify(payload, null, 2);
+  document.getElementById("json").textContent = state.lastJson;
+  document.getElementById("payloadMeta").textContent = M.directives.length + " directives · " + id + " · read-only";
+}
+
+function renderStats(M) {
+  var s = M.stats;
+  document.getElementById("s1").textContent = s.overBefore + " → " + s.overAfter;
+  document.getElementById("s1s").textContent = "before → after routing";
+  document.getElementById("s2").textContent = fmt(s.moved);
+  document.getElementById("s2s").textContent = M.passes ? "across " + M.passes + " cascade pass" + (M.passes > 1 ? "es" : "") : "no diversion needed";
+  document.getElementById("s3").textContent = s.dispatched + (s.due > s.dispatched ? " of " + s.due : "");
+  document.getElementById("s3s").textContent = s.due ? s.due + " ward" + (s.due > 1 ? "s" : "") + " hit 90% within 2 h" : "no bins fill within 2 h";
+  var e = document.getElementById("s4");
+  e.textContent = s.escalations;
+  e.style.color = s.escalations ? "var(--crit)" : "";
+  document.getElementById("s4s").textContent = s.escalations ? "handled by control room" : "all wards resolved";
+}
+
+function renderAll() {
+  var M = compute(state.profile, state.surge, state.closed);
+  state.M = M;
+  document.getElementById("mapTitle").textContent = state.profile.name;
+  renderMap(M); renderSide(M); renderDirectives(M); renderStats(M);
+}
+
+function loadProfile(p, key) {
+  state.profile = JSON.parse(JSON.stringify(p));
+  state.key = key; state.closed = {};
+  var best = null, bestR = -1;
+  state.profile.nodes.forEach(function (n) { if (n.crowd / n.cap > bestR) { bestR = n.crowd / n.cap; best = n.id; } });
+  state.selected = best;
+  document.getElementById("profileJson").value = JSON.stringify(state.profile, null, 1);
+  renderAll();
+}
+
+function init() {
+  var sel = document.getElementById("profile");
+  Object.keys(PROFILES).forEach(function (k) {
+    var o = document.createElement("option"); o.value = k; o.textContent = PROFILES[k].name; sel.appendChild(o);
+  });
+  sel.addEventListener("change", function () {
+    var k = sel.value;
+    if (PROFILES[k]) { document.getElementById("applyMsg").textContent = ""; loadProfile(PROFILES[k], k); }
+  });
+  var surge = document.getElementById("surge");
+  surge.addEventListener("input", function () {
+    state.surge = surge.value / 100;
+    document.getElementById("surgeVal").textContent = surge.value + "%";
+    renderAll();
+  });
+  document.getElementById("reset").addEventListener("click", function () {
+    surge.value = 100; state.surge = 1; document.getElementById("surgeVal").textContent = "100%";
+    var k = PROFILES[sel.value] ? sel.value : "lalbaug";
+    sel.value = k; loadProfile(PROFILES[k], k);
+  });
+  document.getElementById("map").addEventListener("click", function (ev) {
+    var g = ev.target.closest ? ev.target.closest("[data-id]") : null;
+    if (g) { state.selected = g.getAttribute("data-id"); renderAll(); }
+  });
+  document.getElementById("map").addEventListener("keydown", function (ev) {
+    if (ev.key !== "Enter" && ev.key !== " ") return;
+    var g = ev.target.closest ? ev.target.closest("[data-id]") : null;
+    if (g) {
+      ev.preventDefault(); var id = g.getAttribute("data-id"); state.selected = id; renderAll();
+      var again = document.querySelector('#map [data-id="' + id + '"]'); if (again) again.focus();
+    }
+  });
+  document.getElementById("side").addEventListener("click", function (ev) {
+    if (ev.target && ev.target.id === "toggleClose") {
+      if (state.closed[state.selected]) delete state.closed[state.selected]; else state.closed[state.selected] = true;
+      renderAll();
+    }
+  });
+  document.getElementById("apply").addEventListener("click", function () {
+    var msg = document.getElementById("applyMsg");
+    try {
+      var p = JSON.parse(document.getElementById("profileJson").value);
+      var err = validateProfile(p);
+      if (err) { msg.className = "err"; msg.textContent = err; return; }
+      var opt = sel.querySelector('option[value="custom"]');
+      if (!opt) { opt = document.createElement("option"); opt.value = "custom"; sel.appendChild(opt); }
+      opt.textContent = p.name ? p.name + " (edited)" : "Custom profile";
+      sel.value = "custom"; PROFILES.custom = p;
+      loadProfile(p, "custom");
+      msg.className = "ok-msg"; msg.textContent = "Profile applied. Map and directives updated.";
+    } catch (e) { msg.className = "err"; msg.textContent = "Invalid JSON: " + e.message; }
+  });
+  document.getElementById("copy").addEventListener("click", function () {
+    var btn = document.getElementById("copy");
+    var done = function (ok) { btn.textContent = ok ? "Copied" : "Select and copy"; setTimeout(function () { btn.textContent = "Copy JSON"; }, 1600); };
+    try {
+      navigator.clipboard.writeText(state.lastJson).then(function () { done(true); }, function () {
+        var r = document.createRange(); r.selectNodeContents(document.getElementById("json"));
+        var sl = window.getSelection(); sl.removeAllRanges(); sl.addRange(r); done(false);
+      });
+    } catch (e) { done(false); }
+  });
+  loadProfile(PROFILES.lalbaug, "lalbaug");
+}
+if (typeof document !== "undefined") init();
+</script>
+
+</body></html>
